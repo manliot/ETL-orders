@@ -8,6 +8,7 @@ from airflow import DAG
 from airflow.exceptions import AirflowFailException
 from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator
+from airflow.operators.postgres_operator import PostgresOperator
 
 default_args = {
     'depends_on_past': False,
@@ -122,7 +123,8 @@ dag = DAG(
     schedule_interval='0 12 * * *',
     start_date=datetime(2024, 1, 1),
     catchup=False,
-    tags=['ETL']
+    tags=['ETL'],
+    template_searchpath=os.path.join(os.path.dirname(__file__), 'queries')
 )
 
 
@@ -183,9 +185,30 @@ transform_orders = PythonOperator(
     provide_context=True,
 )
 
+create_products_tbl = PostgresOperator(
+    task_id="create_products_tbl",
+    sql="ddl_products_tbl.sql",
+    postgres_conn_id='postgres_con'
+)
+
+create_users_tbl = PostgresOperator(
+    task_id="create_users_tbl",
+    sql="ddl_users_tbl.sql",
+    postgres_conn_id='postgres_con'
+)
+
+create_orders_tbl = PostgresOperator(
+    task_id="create_orders_tbl",
+    sql="ddl_orders_tbl.sql",
+    postgres_conn_id='postgres_con'
+)
+
 
 # ---------- TASK DEPENDENCIES ---------- #
-[extract_orders,
- extract_products,
- extract_users,
- extract_user_info] >> transform_user_info >> transform_user >> transform_orders
+[extract_users, extract_user_info] >> transform_user_info >> transform_user >> transform_orders
+
+[extract_products, transform_user,
+    extract_orders] >> transform_orders >> create_orders_tbl
+
+extract_products >> create_products_tbl
+transform_user >> create_users_tbl

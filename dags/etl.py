@@ -2,6 +2,7 @@ import os
 import json
 from datetime import datetime, timedelta
 import pandas as pd
+import pyarrow as pa
 
 from airflow import DAG
 from airflow.exceptions import AirflowFailException
@@ -55,6 +56,24 @@ def transform_user_info_data(**kwargs):
     df['BirthDay'] = df['BirthDay'].str.split('T').str[0]
 
     return [df.columns.values.tolist()] + df.values.tolist()
+
+
+def transform_user_data(**kwargs):
+    ti = kwargs['ti']
+
+    # retrive user data
+    user_list = ti.xcom_pull(task_ids='extract_users')
+    user_df = pd.DataFrame(user_list)
+    user_df.columns = user_df.iloc[0]
+    user_df = user_df.iloc[1:]
+
+    # retrive user info data
+    user_info_list = ti.xcom_pull(task_ids='transform_user_info')
+    user_info_df = pd.DataFrame(user_info_list)
+    user_info_df.columns = user_info_df.iloc[0]
+    user_info_df = user_info_df.iloc[1:]
+
+    return pd.merge(user_df, user_info_df, left_on='Document', right_on='Document', how='inner')
 
 
 dag = DAG(
@@ -111,9 +130,16 @@ transform_user_info = PythonOperator(
     provide_context=True,
 )
 
+transform_user = PythonOperator(
+    task_id='transform_user',
+    python_callable=transform_user_data,
+    dag=dag,
+    provide_context=True,
+)
+
 
 # ---------- TASK DEPENDENCIES ---------- #
 [extract_orders,
  extract_products,
  extract_users,
- extract_user_info] >> transform_user_info
+ extract_user_info] >> transform_user_info >> transform_user

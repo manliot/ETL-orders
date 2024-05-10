@@ -1,5 +1,6 @@
-from datetime import datetime, timedelta
 import os
+import json
+from datetime import datetime, timedelta
 import pandas as pd
 
 from airflow import DAG
@@ -26,9 +27,32 @@ def extract_from_file(**kwargs):
 
     df = pd.DataFrame()
     if (type == 'json'):
-        df = pd.read_json(file_path)
+        data = {}
+        with open(file_path, 'r') as file:
+            data = json.load(file)
+        df = pd.json_normalize(data['data'])
     elif (type == 'csv'):
         df = pd.read_csv(file_path)
+
+    return [df.columns.values.tolist()] + df.values.tolist()
+
+
+def transform_user_info_data(**kwargs):
+    # retrive user info data
+    ti = kwargs['ti']
+    df_list = ti.xcom_pull(task_ids='extract_user_info')
+    df = pd.DataFrame(df_list)
+
+    # change column names
+    df.columns = ['Document', 'Name', 'BirthDay', 'Gender', 'Email', 'Phone']
+    df = df.iloc[1:]
+    df.head()
+
+    # normalize gender column
+    df['Gender'] = df['Gender'].replace({'Male': 'M', 'f': 'F'})
+
+    # format bithday column
+    df['BirthDay'] = df['BirthDay'].str.split('T').str[0]
 
     return [df.columns.values.tolist()] + df.values.tolist()
 
@@ -44,7 +68,7 @@ dag = DAG(
 )
 
 
-# EXTRACT tasks
+# ---------- EXTRACT tasks ---------- #
 extract_orders = PythonOperator(
     task_id='extract_orders',
     python_callable=extract_from_file,
@@ -79,11 +103,17 @@ extract_user_info = PythonOperator(
                'file_name': 'user_info.json'}
 )
 
-# TRANSFORM tasks
+# ---------- TRANSFORM tasks ---------- #
+transform_user_info = PythonOperator(
+    task_id='transform_user_info',
+    python_callable=transform_user_info_data,
+    dag=dag,
+    provide_context=True,
+)
 
 
-# task dependencies
+# ---------- TASK DEPENDENCIES ---------- #
 [extract_orders,
  extract_products,
  extract_users,
- extract_user_info]
+ extract_user_info] >> transform_user_info

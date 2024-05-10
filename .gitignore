@@ -3,3 +3,4 @@
 *.log
 airflow.db
 airflow-webserver.pid
+__pycache__/ 

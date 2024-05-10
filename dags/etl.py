@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta
+import os
+import pandas as pd
 
 from airflow import DAG
 from airflow.exceptions import AirflowFailException
@@ -6,29 +8,82 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator
 
 default_args = {
-  'depends_on_past': False,
-  'email': [],
-  'email_on_failure': False,
-  'email_on_retry': False,
-  'retries': 2,
-  'retry_delay': timedelta(minutes=1),
-  'catchup': False
+    'depends_on_past': False,
+    'email': [],
+    'email_on_failure': False,
+    'email_on_retry': False,
+    'retries': 2,
+    'retry_delay': timedelta(minutes=1),
+    'catchup': False
 }
 
+
+def extract_from_file(**kwargs):
+    """read a json or csv file and save data in list format (in XCOM)"""
+    file_path = os.path.join(os.path.dirname(
+        __file__), 'utils', 'outputFiles', kwargs['file_name'])
+    type = kwargs['type']
+
+    df = pd.DataFrame()
+    if (type == 'json'):
+        df = pd.read_json(file_path)
+    elif (type == 'csv'):
+        df = pd.read_csv(file_path)
+
+    return [df.columns.values.tolist()] + df.values.tolist()
+
+
 dag = DAG(
-  'ETL',
-  description='This is an example of a etl process',
-  default_args=default_args,
-  schedule_interval='0 12 * * *',
-  start_date=datetime(2024, 1, 1),
-  catchup=False,
-  tags=['ETL']
+    'ETL',
+    description='This is an example of a etl process',
+    default_args=default_args,
+    schedule_interval='0 12 * * *',
+    start_date=datetime(2024, 1, 1),
+    catchup=False,
+    tags=['ETL']
 )
 
-tarea1=BashOperator(
-  task_id='print_date',
-  bash_command='echo "La fecha es $(date)"',
-  dag=dag
+
+# EXTRACT tasks
+extract_orders = PythonOperator(
+    task_id='extract_orders',
+    python_callable=extract_from_file,
+    dag=dag,
+    provide_context=True,
+    op_kwargs={'type': 'csv', 'file_name': 'orders.csv'}
 )
 
-tarea1
+extract_products = PythonOperator(
+    task_id='extract_products',
+    python_callable=extract_from_file,
+    dag=dag,
+    provide_context=True,
+    op_kwargs={'type': 'csv',
+               'file_name': 'products.csv'}
+)
+
+extract_users = PythonOperator(
+    task_id='extract_users',
+    python_callable=extract_from_file,
+    dag=dag,
+    provide_context=True,
+    op_kwargs={'type': 'csv', 'file_name': 'users.csv'}
+)
+
+extract_user_info = PythonOperator(
+    task_id='extract_user_info',
+    python_callable=extract_from_file,
+    dag=dag,
+    provide_context=True,
+    op_kwargs={'type': 'json',
+               'file_name': 'user_info.json'}
+)
+
+# TRANSFORM tasks
+
+
+# task dependencies
+[extract_orders,
+ extract_products,
+ extract_users,
+ extract_user_info]

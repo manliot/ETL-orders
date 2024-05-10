@@ -73,7 +73,46 @@ def transform_user_data(**kwargs):
     user_info_df.columns = user_info_df.iloc[0]
     user_info_df = user_info_df.iloc[1:]
 
+    # inner join btw user_df and user_info_df
     return pd.merge(user_df, user_info_df, left_on='Document', right_on='Document', how='inner')
+
+
+def transform_orders_data(**kwargs):
+    ti = kwargs['ti']
+
+    # retrive product data
+    product_list = ti.xcom_pull(task_ids='extract_products')
+    products_df = pd.DataFrame(product_list)
+    products_df.columns = products_df.iloc[0]
+    products_df = products_df.iloc[1:]
+
+    # retrive user info data
+    user_list = ti.xcom_pull(task_ids='transform_user')
+    user_df = pd.DataFrame(user_list)
+
+    # retrive orders data
+    orders_list = ti.xcom_pull(task_ids='extract_orders')
+    orders_df = pd.DataFrame(orders_list)
+    orders_df.columns = orders_df.iloc[0]
+    orders_df = orders_df.iloc[1:]
+
+    # inner join btw user_df and user_info_df
+    temp_orders = pd.merge(orders_df, products_df,
+                           left_on='Product_ID', right_on='Id', how='inner')
+
+    # inner join btw user_df and user_info_df
+    temp_orders = pd.merge(temp_orders, user_df,
+                           left_on='User_ID', right_on='Id', how='inner')
+
+    # filter final columns
+    final_orders_df = temp_orders[[
+        'Fecha', 'Product_ID', 'Name_x', 'Category', 'Price']]
+
+    # rename Name_x
+    final_orders_df = final_orders_df.rename(
+        columns={'Name_x': 'Product_Name'})
+
+    return final_orders_df
 
 
 dag = DAG(
@@ -137,9 +176,16 @@ transform_user = PythonOperator(
     provide_context=True,
 )
 
+transform_orders = PythonOperator(
+    task_id='transform_orders',
+    python_callable=transform_orders_data,
+    dag=dag,
+    provide_context=True,
+)
+
 
 # ---------- TASK DEPENDENCIES ---------- #
 [extract_orders,
  extract_products,
  extract_users,
- extract_user_info] >> transform_user_info >> transform_user
+ extract_user_info] >> transform_user_info >> transform_user >> transform_orders

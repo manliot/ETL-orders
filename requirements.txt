@@ -8,3 +8,4 @@ pyarrow
 apache-airflow-providers-ssh
 apache-airflow-providers-postgres
 psycopg2-binary
+SQLAlchemy

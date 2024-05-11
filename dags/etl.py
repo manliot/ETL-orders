@@ -25,6 +25,7 @@ default_args = {
 
 def extract_from_file(**kwargs):
     """read a json or csv file and save data in list format (in XCOM)"""
+    # get args
     file_path = os.path.join(os.path.dirname(
         __file__), 'utils', 'outputFiles', kwargs['file_name'])
     type = kwargs['type']
@@ -33,17 +34,20 @@ def extract_from_file(**kwargs):
     if (type == 'json'):
         data = {}
         with open(file_path, 'r') as file:
+            # create a pythonobject with json file
             data = json.load(file)
+        # json to pandas Dataframe
         df = pd.json_normalize(data['data'])
     elif (type == 'csv'):
+        # pandas Dataframe from csv file
         df = pd.read_csv(file_path)
 
-    return [df.columns.values.tolist()] + df.values.tolist()
+    return [df.columns.values.tolist()] + df.values.tolist()  # xcom
 
 
 def transform_user_info_data(**kwargs):
     # retrive user info data
-    ti = kwargs['ti']
+    ti = kwargs['ti']  # task instance
     df_list = ti.xcom_pull(task_ids='extract_user_info')
     df = pd.DataFrame(df_list)
 
@@ -56,9 +60,10 @@ def transform_user_info_data(**kwargs):
     df['Gender'] = df['Gender'].replace({'Male': 'M', 'f': 'F'})
 
     # format bithday column
-    df['BirthDay'] = df['BirthDay'].str.split('T').str[0]
+    df['BirthDay'] = df['BirthDay'].str.split(
+        'T').str[0]  # 1967-02-20T00:00:00 --> yyyy-mm-dd
 
-    return [df.columns.values.tolist()] + df.values.tolist()
+    return [df.columns.values.tolist()] + df.values.tolist()  # xcom
 
 
 def transform_user_data(**kwargs):
@@ -77,6 +82,7 @@ def transform_user_data(**kwargs):
     user_info_df = user_info_df.iloc[1:]
 
     # inner join btw user_df and user_info_df
+    # xcom
     return pd.merge(user_df, user_info_df, left_on='Document', right_on='Document', how='inner')
 
 
@@ -109,7 +115,7 @@ def transform_orders_data(**kwargs):
 
     # filter final columns
     final_orders_df = temp_orders[[
-        'Fecha', 'Product_ID', 'Name_x', 'Category', 'Price']]
+        'Fecha', 'User_ID', 'Product_ID', 'Name_x', 'Category', 'Price']]
 
     # rename Name_x
     final_orders_df = final_orders_df.rename(
@@ -145,7 +151,7 @@ dag = DAG(
     default_args=default_args,
     schedule_interval='0 12 * * *',
     start_date=datetime(2024, 1, 1),
-    catchup=False,
+    catchup=False,  # execute tasks for past time that have not been run
     tags=['ETL'],
     template_searchpath=os.path.join(os.path.dirname(__file__), 'queries')
 )
@@ -156,7 +162,7 @@ extract_orders = PythonOperator(
     task_id='extract_orders',
     python_callable=extract_from_file,
     dag=dag,
-    provide_context=True,
+    provide_context=True,  # xcom
     op_kwargs={'type': 'csv', 'file_name': 'orders.csv'}
 )
 
@@ -256,6 +262,7 @@ populate_orders_query = PythonOperator(
     op_kwargs={'task_id': 'transform_orders',
                'table_name': 'orders',
                'filter_columns': ['ORDER_DATE',
+                                  'USER_ID',
                                   'PRODUCT_ID',
                                   'PRODUCT_NAME',
                                   'CATEGORY',

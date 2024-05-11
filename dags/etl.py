@@ -6,9 +6,11 @@ import pyarrow as pa
 
 from airflow import DAG
 from airflow.exceptions import AirflowFailException
-from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator
 from airflow.operators.postgres_operator import PostgresOperator
+
+from utils.df_to_sql import df_to_sql_insert
+postgres_con_id = 'postgres_con'
 
 default_args = {
     'depends_on_past': False,
@@ -116,6 +118,27 @@ def transform_orders_data(**kwargs):
     return final_orders_df
 
 
+def populate_table_query(**kwargs):
+    ti = kwargs['ti']
+    task_id = kwargs['task_id']
+    table_name = 'airflow_db.airflow.'+kwargs['table_name']
+    filter_columns = kwargs['filter_columns']
+
+    file_path = os.path.join(os.path.dirname(
+        __file__), 'queries', 'populate', kwargs['table_name']+'.sql')
+
+    # retrive data
+    df_list = ti.xcom_pull(task_ids=task_id)
+    df = pd.DataFrame(df_list)
+    df.columns = df.iloc[0]
+    df = df.iloc[1:]
+
+    # create insert values query
+    insert_query = df_to_sql_insert(df, table_name, filter_columns)
+    with open(file_path, "w") as file:
+        file.write(insert_query)
+
+
 dag = DAG(
     'ETL',
     description='This is an example of a etl process',
@@ -185,22 +208,76 @@ transform_orders = PythonOperator(
     provide_context=True,
 )
 
+# ---------- LOAD tasks ---------- #
 create_products_tbl = PostgresOperator(
     task_id="create_products_tbl",
     sql="ddl_products_tbl.sql",
-    postgres_conn_id='postgres_con'
+    postgres_conn_id=postgres_con_id
 )
+
 
 create_users_tbl = PostgresOperator(
     task_id="create_users_tbl",
     sql="ddl_users_tbl.sql",
-    postgres_conn_id='postgres_con'
+    postgres_conn_id=postgres_con_id
 )
 
 create_orders_tbl = PostgresOperator(
     task_id="create_orders_tbl",
     sql="ddl_orders_tbl.sql",
-    postgres_conn_id='postgres_con'
+    postgres_conn_id=postgres_con_id
+)
+
+populate_products_query = PythonOperator(
+    task_id='populate_products_query',
+    python_callable=populate_table_query,
+    dag=dag,
+    provide_context=True,
+    op_kwargs={'task_id': 'extract_products',
+               'table_name': 'products',
+               'filter_columns': []}
+)
+
+populate_users_query = PythonOperator(
+    task_id='populate_users_query',
+    python_callable=populate_table_query,
+    dag=dag,
+    provide_context=True,
+    op_kwargs={'task_id': 'transform_user',
+               'table_name': 'users',
+               'filter_columns': []}
+)
+
+populate_orders_query = PythonOperator(
+    task_id='populate_orders_query',
+    python_callable=populate_table_query,
+    dag=dag,
+    provide_context=True,
+    op_kwargs={'task_id': 'transform_orders',
+               'table_name': 'orders',
+               'filter_columns': ['ORDER_DATE',
+                                  'PRODUCT_ID',
+                                  'PRODUCT_NAME',
+                                  'CATEGORY',
+                                  'PRICE']}
+)
+
+load_products_data = PostgresOperator(
+    task_id='load_products_data',
+    sql="populate/products.sql",
+    postgres_conn_id=postgres_con_id
+)
+
+load_users_data = PostgresOperator(
+    task_id='load_users_data',
+    sql="populate/users.sql",
+    postgres_conn_id=postgres_con_id
+)
+
+load_orders_data = PostgresOperator(
+    task_id='load_orders_data',
+    sql="populate/orders.sql",
+    postgres_conn_id=postgres_con_id
 )
 
 
@@ -208,7 +285,7 @@ create_orders_tbl = PostgresOperator(
 [extract_users, extract_user_info] >> transform_user_info >> transform_user >> transform_orders
 
 [extract_products, transform_user,
-    extract_orders] >> transform_orders >> create_orders_tbl
+    extract_orders] >> transform_orders >> create_orders_tbl >> populate_orders_query >> load_orders_data
 
-extract_products >> create_products_tbl
-transform_user >> create_users_tbl
+extract_products >> create_products_tbl >> populate_products_query >> load_products_data
+transform_user >> create_users_tbl >> populate_users_query >> load_users_data
